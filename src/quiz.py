@@ -26,8 +26,9 @@ db = firestore.client()
 async def fetch_and_process_document(doc):
     video_data = doc.to_dict()  # Firestore 문서를 파이썬 딕셔너리로 변환.
     detail = video_data.get('detail', '')  # 'detail' 키의 값을 가져옴. 없을 경우 빈 문자열을 반환.
+    quiz_generated = video_data.get('quiz_generated', False)  # 퀴즈 생성 여부를 확인.
 
-    if detail:  # 'detail' 필드가 존재할 경우에만 처리를 진행.
+    if detail and not quiz_generated:  # 'detail' 필드가 존재하고, 퀴즈가 아직 생성되지 않았을 경우에만 처리.
         try:
             # 비동기 이벤트 루프를 가져옴.
             loop = asyncio.get_event_loop()
@@ -44,6 +45,9 @@ async def fetch_and_process_document(doc):
             # API 응답에서 퀴즈 생성 결과를 추출.
             response = completion.choices[0].message.content if completion.choices else "응답 없음"
             print(f"비디오 {doc.id}에 대한 응답: {response}")
+
+            # 퀴즈 생성 여부를 업데이트하여 캐싱 로직을 완성.
+            doc.reference.update({"quiz_generated": True})
         except Exception as e:
             # 오류 발생 시 콘솔에 오류 메시지를 출력.
             print(f"비디오 {doc.id} 처리 중 오류 발생: {e}")
@@ -51,7 +55,7 @@ async def fetch_and_process_document(doc):
 # 메인 비동기 함수.
 async def main():
     videos_ref = db.collection(u'videos')  # 'videos' 컬렉션에 대한 참조를 가져옴.
-    docs = videos_ref.stream()  # 컬렉션의 모든 문서를 스트리밍.
+    docs = videos_ref.where(u'quiz_generated', '==', False).stream()  # 아직 퀴즈가 생성되지 않은 문서만 스트리밍.
 
     # 각 문서에 대해 fetch_and_process_document 함수를 비동기적으로 실행하는 태스크를 생성.
     tasks = [fetch_and_process_document(doc) for doc in docs]
