@@ -1,6 +1,7 @@
 # 필요한 라이브러리 설치
 # pip install python-dotenv firebase-admin openai asyncio
 import asyncio
+import json
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore, initialize_app
@@ -8,7 +9,6 @@ from openai import OpenAI
 import os
 
 # .env 파일에서 환경 변수를 로드. 
-# 이 파일은 API 키와 같은 중요한 정보를 저장.
 load_dotenv()
 
 # OpenAI 클라이언트를 초기화.
@@ -16,7 +16,6 @@ api_key = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
 # Firebase를 초기화하고 Firestore 클라이언트를 설정.
-# Firebase 관련 설정은 .env 파일에 저장된 경로에서 JSON 형태로 불러옴.
 cred = credentials.Certificate(os.environ.get("FIREBASE_CREDENTIALS_PATH"))
 if not len(firebase_admin._apps):
     initialize_app(cred)  # 이미 초기화되지 않았다면 초기화를 수행.
@@ -32,24 +31,51 @@ async def fetch_and_process_document(doc):
         try:
             # 비동기 이벤트 루프를 가져옴.
             loop = asyncio.get_event_loop()
-
             # 동기 함수인 OpenAI의 API 호출을 비동기적으로 실행.
-            # run_in_executor를 사용해 동기 함수를 비동기적으로 처리할 수 있음.
             completion = await loop.run_in_executor(None, lambda: client.chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
-                    {"role": "system", "content": "너는 IT 개발 최고 수준의 전문가야"},
-                    {"role": "user", "content": f"다음 세부 정보를 바탕으로 객관식 퀴즈를 만들어주세요. 난이도는 쉬움, 보통, 어려움 중에서 선택하고, 각 문제에는 4개의 선택지와 정답을 포함해주세요: {detail}"},
+                    {
+                        "role": "system", 
+                        "content": "당신은 IT 개발 최고 수준의 전문가입니다."
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"다음 세부 정보를 바탕으로 IT 관련 객관식 퀴즈 3개를 만들어주세요. 난이도는 쉬움, 보통, 어려움 중에서 선택하고, 각 문제에는 4개의 선택지와 정답을 포함해주세요. 출력은 다음과 같은 JSON 포맷 형식으로 출력해주세요: {{'question': <질문>, 'choices': [<선택지1>, <선택지2>, <선택지3>, <선택지4>], 'answer': <정답>, 'difficulty': <난이도>}}: {detail}"
+                    },
                 ]
             ))
             # API 응답에서 퀴즈 생성 결과를 추출.
             response = completion.choices[0].message.content if completion.choices else "응답 없음"
             print(f"비디오 {doc.id}에 대한 응답: {response}")
 
-            # 퀴즈 생성 여부를 업데이트하여 캐싱 로직을 완성.
+            # response 문자열에서 불필요한 부분 제거
+            response_cleaned = response.replace("```json\n", "").replace("\n```", "")
+
+            # 퀴즈를 JSON으로 변환.
+            quiz_json = json.loads(response_cleaned)
+
+            # 'Quizzes' 컬렉션에 퀴즈를 저장.
+            quizzes_ref = db.collection('quizzes')
+
+            # 퀴즈에 대한 각 문항을 개별적으로 처리.
+            for quiz_item in quiz_json:
+                # 퀴즈에 비디오 ID와 생성일자 추가.
+                quiz_item["video_id"] = doc.id
+                quiz_item["created_at"] = firestore.SERVER_TIMESTAMP
+
+                # 정답을 선택지 리스트에서 찾아 인덱스로 저장.
+                answer_index = quiz_item["choices"].index(quiz_item["answer"])
+                quiz_item["answer"] = answer_index
+
+                # 각각의 퀴즈 항목을 'Quizzes' 컬렉션에 추가.
+                quizzes_ref.add(quiz_item)
+            
+            # 퀴즈 생성 여부를 업데이트.
             doc.reference.update({"quiz_generated": True})
+            
+            print("-----퀴즈 저장 완료-----")
         except Exception as e:
-            # 오류 발생 시 콘솔에 오류 메시지를 출력.
             print(f"비디오 {doc.id} 처리 중 오류 발생: {e}")
 
 # 메인 비동기 함수.
