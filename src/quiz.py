@@ -21,8 +21,14 @@ if not len(firebase_admin._apps):
     initialize_app(cred)  # 이미 초기화되지 않았다면 초기화를 수행.
 db = firestore.client()
 
-# 각 문서(여기서는 비디오 정보)를 처리하는 비동기 함수.
 async def fetch_and_process_document(doc):
+    """
+    Fetches video document from Firestore, generates quizzes using OpenAI API,
+    and stores them back in Firestore.
+    
+    Parameters:
+        doc: Firestore document representing a video.
+    """
     video_data = doc.to_dict()  # Firestore 문서를 파이썬 딕셔너리로 변환.
     detail = video_data.get('detail', '')  # 'detail' 키의 값을 가져옴. 없을 경우 빈 문자열을 반환.
     quiz_generated = video_data.get('quiz_generated', False)  # 퀴즈 생성 여부를 확인.
@@ -34,49 +40,54 @@ async def fetch_and_process_document(doc):
             # 동기 함수인 OpenAI의 API 호출을 비동기적으로 실행.
             completion = await loop.run_in_executor(None, lambda: client.chat.completions.create(
                 model="gpt-4-turbo-preview",
+                response_format={"type": "json_object"},
                 messages=[
                     {
-                        "role": "system", 
-                        "content": "당신은 IT 개발 최고 수준의 전문가입니다."
+                        "role": "system",
+                        "content": (
+                            "You are a model designed to generate multiple quiz questions as a complex JSON object in Korean. "
+                            "Based on the input details, create a JSON object containing 10 quizzes, "
+                            "each with 'question', 'choices', 'answer', and 'difficulty' keys. "
+                            "'choices' must contain four options, and 'difficulty' must use either 'easy', 'medium', or 'hard'. "
+                            "Ensure each quiz is unique, relevant to the input details, and has an appropriate difficulty level."
+                        )
                     },
                     {
-                        "role": "user", 
-                        "content": f"다음 세부 정보를 바탕으로 IT 관련 객관식 퀴즈 3개를 만들어주세요. 난이도는 쉬움, 보통, 어려움 중에서 선택하고, 각 문제에는 4개의 선택지와 정답을 포함해주세요. 출력은 다음과 같은 JSON 포맷 형식으로 출력해주세요: {{'question': <질문>, 'choices': [<선택지1>, <선택지2>, <선택지3>, <선택지4>], 'answer': <정답>, 'difficulty': <난이도>}}: {detail}"
+                        "role": "user",
+                        "content": f"Generate a complex JSON object with 10 quizzes in Korean based on these details: {detail}"
                     },
                 ]
             ))
-            # API 응답에서 퀴즈 생성 결과를 추출.
-            response = completion.choices[0].message.content if completion.choices else "응답 없음"
-            print(f"비디오 {doc.id}에 대한 응답: {response}")
+            
+            response = completion.choices[0].message.content if completion.choices else "{}"
+            print(f"Response from video {doc.id}: {response}")
 
-            # response 문자열에서 불필요한 부분 제거
-            response_cleaned = response.replace("```json\n", "").replace("\n```", "")
+            try:
+                response_data = json.loads(response)
+                quizzes = response_data.get("quizzes", [])
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing error: {e}")
+                return
 
-            # 퀴즈를 JSON으로 변환.
-            quiz_json = json.loads(response_cleaned)
-
-            # 'Quizzes' 컬렉션에 퀴즈를 저장.
+            # Process the quizzes
             quizzes_ref = db.collection('quizzes')
+            for quiz in quizzes:
+                quiz["video_id"] = doc.id
+                quiz["created_at"] = firestore.SERVER_TIMESTAMP
+                try:
+                    # 선택지에서 정답 인덱스를 찾음
+                    answer_index = quiz["choices"].index(quiz["answer"])
+                    # 답변을 인덱스로 업데이트
+                    quiz["answer"] = answer_index
+                except ValueError:
+                    print(f"Answer not found in choices for quiz on video {doc.id}")
+                    continue  # 정답이 선택지에 없으면 해당 퀴즈를 건너뛰고 계속 진행
+                quizzes_ref.add(quiz)
 
-            # 퀴즈에 대한 각 문항을 개별적으로 처리.
-            for quiz_item in quiz_json:
-                # 퀴즈에 비디오 ID와 생성일자 추가.
-                quiz_item["video_id"] = doc.id
-                quiz_item["created_at"] = firestore.SERVER_TIMESTAMP
-
-                # 정답을 선택지 리스트에서 찾아 인덱스로 저장.
-                answer_index = quiz_item["choices"].index(quiz_item["answer"])
-                quiz_item["answer"] = answer_index
-
-                # 각각의 퀴즈 항목을 'Quizzes' 컬렉션에 추가.
-                quizzes_ref.add(quiz_item)
-            
-            # 퀴즈 생성 여부를 업데이트.
             doc.reference.update({"quiz_generated": True})
-            
-            print("-----퀴즈 저장 완료-----")
+            print("Quizzes successfully saved.")
         except Exception as e:
-            print(f"비디오 {doc.id} 처리 중 오류 발생: {e}")
+            print(f"Error processing video {doc.id}: {e}")
 
 # 메인 비동기 함수.
 async def main():
