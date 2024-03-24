@@ -49,12 +49,16 @@ async def fetch_and_process_document(doc):
                             "Based on the input details, create a JSON object containing 10 quizzes, "
                             "each with 'question', 'choices', 'answer', and 'difficulty' keys. "
                             "'choices' must contain four options, and 'difficulty' must use either 'easy', 'medium', or 'hard'. "
-                            "Ensure each quiz is unique, relevant to the input details, and has an appropriate difficulty level."
+                            "Ensure each quiz is unique, relevant to the input details and relevant to the IT field, "
+                            "and has an appropriate difficulty level."
                         )
                     },
                     {
                         "role": "user",
-                        "content": f"Generate a complex JSON object with 10 quizzes in Korean based on these details: {detail}"
+                        "content": (
+                            f"Generate a complex JSON object with 10 quizzes in Korean based on these details: {detail}. "
+                            "focusing on IT-related topics."
+                        )
                     },
                 ]
             ))
@@ -74,6 +78,7 @@ async def fetch_and_process_document(doc):
             for quiz in quizzes:
                 quiz["video_id"] = doc.id
                 quiz["created_at"] = firestore.SERVER_TIMESTAMP
+                quiz["type"] = "multiple"
                 try:
                     # 선택지에서 정답 인덱스를 찾음
                     answer_index = quiz["choices"].index(quiz["answer"])
