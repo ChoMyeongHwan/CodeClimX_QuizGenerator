@@ -21,10 +21,10 @@ db = firestore.client()
 
 async def fetch_and_process_document(doc):
     video_data = doc.to_dict()
-    detail = video_data.get('detail', '')
+    video_detail = video_data.get('detail', '')
     quiz_generated = video_data.get('descriptive_generated', False)
 
-    if detail and not quiz_generated:
+    if video_detail and not quiz_generated:
         try:
             loop = asyncio.get_event_loop()
             completion = await loop.run_in_executor(None, lambda: client.chat.completions.create(
@@ -34,21 +34,19 @@ async def fetch_and_process_document(doc):
                     {
                         "role": "system",
                         "content": (
-                            "You are a model designed to generate descriptive quiz questions as a complex JSON object in Korean. "
-                            "Based on the specified focus on IT-related content, create a JSON object containing 3 quizzes. "
-                            "each with 'question', 'hint', and 'difficulty' keys. "
-                            "'difficulty' must use either 'easy', 'medium', or 'hard'. "
-                            "Each quiz should include a 'question' that prompts the user to provide a detailed, descriptive answer "
-                            "and may include an optional 'hint'. The questions should be crafted to reflect deep understanding and "
-                            "application of IT concepts, encouraging users to elaborate on their responses. "
-                            "Ensure each quiz is unique, insightful, and relevant to the IT field."
+                            "You are a model designed to generate descriptive quiz questions as complex JSON objects in Korean. "
+                            "Based on the specified focus on IT-related content, create a JSON object containing 3 quizzes, each with 'question', 'hint', and 'difficulty' keys. "
+                            "The 'difficulty' key must use one of the following values: 'easy', 'medium', or 'hard'. "
+                            "Each quiz should include a 'question' that requires a detailed and descriptive answer from the user and a 'hint' that helps you answer the question. "
+                            "Questions should be crafted to reflect a deep understanding and application of IT concepts, encouraging users to elaborate on their responses. "
+                            "Ensure each quiz is unique, insightful. "
+                            "Additionally, create quizzes based on the given 'video_detail'."
                         )
                     },
                     {
                         "role": "user",
                         "content": (
-                            f"Generate a complex JSON object with 3 descriptive quizzes in Korean based on these details: {detail}. "
-                            "focusing on IT-related topics."
+                            f"video_detail: {video_detail}."
                         )
                     },
                 ]
