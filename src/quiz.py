@@ -30,10 +30,10 @@ async def fetch_and_process_document(doc):
         doc: Firestore document representing a video.
     """
     video_data = doc.to_dict()  # Firestore 문서를 파이썬 딕셔너리로 변환.
-    detail = video_data.get('detail', '')  # 'detail' 키의 값을 가져옴. 없을 경우 빈 문자열을 반환.
+    video_detail = video_data.get('detail', '')  # 'detail' 키의 값을 가져옴. 없을 경우 빈 문자열을 반환.
     quiz_generated = video_data.get('quiz_generated', False)  # 퀴즈 생성 여부를 확인.
 
-    if detail and not quiz_generated:  # 'detail' 필드가 존재하고, 퀴즈가 아직 생성되지 않았을 경우에만 처리.
+    if video_detail and not quiz_generated:  # 'detail' 필드가 존재하고, 퀴즈가 아직 생성되지 않았을 경우에만 처리.
         try:
             # 비동기 이벤트 루프를 가져옴.
             loop = asyncio.get_event_loop()
@@ -45,16 +45,18 @@ async def fetch_and_process_document(doc):
                     {
                         "role": "system",
                         "content": (
-                            "You are a model designed to generate multiple quiz questions as a complex JSON object in Korean. "
-                            "Based on the input details, create a JSON object containing 10 quizzes, "
+                            "You are a model designed to generate multiple choice quiz questions as complex JSON objects in Korean. "
+                            "Based on the input 'video_detail', create a JSON object containing 10 quizzes, "
                             "each with 'question', 'choices', 'answer', and 'difficulty' keys. "
-                            "'choices' must contain four options, and 'difficulty' must use either 'easy', 'medium', or 'hard'. "
-                            "Ensure each quiz is unique, relevant to the input details, and has an appropriate difficulty level."
+                            "'choices' must contain four options, and 'difficulty' must use one of the following values: 'easy', 'medium', or 'hard'. "
+                            "Ensure each quiz is unique, relevant to the input details, and relevant to the IT field."
                         )
                     },
                     {
                         "role": "user",
-                        "content": f"Generate a complex JSON object with 10 quizzes in Korean based on these details: {detail}"
+                        "content": (
+                            f"video_detail: {video_detail}."
+                        )
                     },
                 ]
             ))
@@ -74,6 +76,7 @@ async def fetch_and_process_document(doc):
             for quiz in quizzes:
                 quiz["video_id"] = doc.id
                 quiz["created_at"] = firestore.SERVER_TIMESTAMP
+                quiz["type"] = "multiple"
                 try:
                     # 선택지에서 정답 인덱스를 찾음
                     answer_index = quiz["choices"].index(quiz["answer"])
